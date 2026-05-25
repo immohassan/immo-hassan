@@ -33,8 +33,9 @@ export default function WhyMe() {
               alt="Hassan portrait reveals mountaineering on hover"
             />
             <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between eyebrow-muted pointer-events-none">
-              <span>Hover to reveal</span>
-              <span className="text-accent-ink">Liquid mask</span>
+              <span className="hidden md:inline">Hover to reveal</span>
+              <span className="md:hidden">Auto reveal</span>
+              <span className="text-accent">Liquid mask</span>
             </div>
           </div>
 

@@ -19,20 +19,18 @@ type Props = {
   parallax?: number;
   alt?: string;
   className?: string;
+  /** Force auto-loop mode (otherwise auto-detects touch / no-hover devices). */
+  autoLoop?: boolean;
+  /** Seconds for one full auto-loop traversal. */
+  autoLoopDuration?: number;
 };
 
 /**
- * Cursor-reactive liquid mask reveal.
+ * Cursor-reactive liquid mask reveal with mobile auto-animation.
  *
- * Uses an SVG <mask> with feTurbulence + feDisplacementMap to give the
- * reveal blob an organic, animated edge — inspired by the Framer
- * "Crazy Hover Mask Reveal" component.
- *
- * Two stacked images:
- *   - frontImage: always visible base layer
- *   - backImage:  rendered with the liquid mask; only visible inside the blob
- *
- * The back image also gets a subtle parallax based on cursor position.
+ * Desktop (hover): blob follows cursor, retracts on leave.
+ * Touch / no-hover: blob auto-traces a smooth lissajous path across the
+ * image so the reveal always plays — no input needed.
  */
 export default function HoverMaskReveal({
   frontImage,
@@ -42,6 +40,8 @@ export default function HoverMaskReveal({
   parallax = 0.04,
   alt = "",
   className = "",
+  autoLoop,
+  autoLoopDuration = 7,
 }: Props) {
   const uid = useId().replace(/:/g, "");
   const maskId = `liquid-mask-${uid}`;
@@ -51,22 +51,34 @@ export default function HoverMaskReveal({
   const rafRef = useRef<number | null>(null);
   const animatingRef = useRef(false);
   const lastTimeRef = useRef<number>(0);
+  const autoStartRef = useRef<number>(0);
 
-  // Target & current values — current eases toward target each frame
   const target = useRef({ x: 0, y: 0, r: 0 });
   const current = useRef({ x: 0, y: 0, r: 0 });
 
   const [dims, setDims] = useState({ w: 0, h: 0 });
+  const [touchMode, setTouchMode] = useState(false);
 
-  // Refs to SVG nodes we mutate directly (avoids React re-render per frame)
   const blobRef = useRef<SVGCircleElement | null>(null);
   const backImgRef = useRef<HTMLDivElement | null>(null);
   const turbRef = useRef<SVGFETurbulenceElement | null>(null);
 
-  // Smoothing factors
-  const FOLLOW = 0.18; // cursor follow ease
-  const GROW = 0.22; // radius grow ease
+  const FOLLOW = 0.18;
+  const GROW = 0.22;
   const shrinkPerSec = size / returnDuration;
+
+  // Detect touch / no-hover capability on mount.
+  useEffect(() => {
+    if (autoLoop !== undefined) {
+      setTouchMode(autoLoop);
+      return;
+    }
+    const mql = window.matchMedia("(hover: none), (pointer: coarse)");
+    setTouchMode(mql.matches);
+    const onChange = (e: MediaQueryListEvent) => setTouchMode(e.matches);
+    mql.addEventListener?.("change", onChange);
+    return () => mql.removeEventListener?.("change", onChange);
+  }, [autoLoop]);
 
   const updateSize = useCallback(() => {
     const el = containerRef.current;
@@ -89,19 +101,27 @@ export default function HoverMaskReveal({
         : 0.016;
       lastTimeRef.current = time;
 
-      // Position follow
+      // In touch mode, drive the target along a lissajous path so the blob
+      // sweeps the whole frame smoothly without ever stopping.
+      if (touchMode && dims.w && dims.h) {
+        if (!autoStartRef.current) autoStartRef.current = time;
+        const t = ((time - autoStartRef.current) / 1000) / autoLoopDuration;
+        const ang = t * Math.PI * 2;
+        const padX = dims.w * 0.22;
+        const padY = dims.h * 0.22;
+        target.current.x = dims.w / 2 + Math.sin(ang) * (dims.w / 2 - padX);
+        target.current.y =
+          dims.h / 2 + Math.sin(ang * 2) * (dims.h / 2 - padY);
+        target.current.r = size;
+      }
+
       current.current.x += (target.current.x - current.current.x) * FOLLOW;
       current.current.y += (target.current.y - current.current.y) * FOLLOW;
 
-      // Radius: grow eased, shrink linear by returnDuration
       if (target.current.r > 0) {
-        current.current.r +=
-          (target.current.r - current.current.r) * GROW;
+        current.current.r += (target.current.r - current.current.r) * GROW;
       } else {
-        current.current.r = Math.max(
-          0,
-          current.current.r - shrinkPerSec * dt
-        );
+        current.current.r = Math.max(0, current.current.r - shrinkPerSec * dt);
       }
 
       if (blobRef.current) {
@@ -110,7 +130,6 @@ export default function HoverMaskReveal({
         blobRef.current.setAttribute("r", String(current.current.r));
       }
 
-      // Parallax shift on the back image (relative to center)
       if (backImgRef.current && dims.w && dims.h) {
         const px =
           ((current.current.x - dims.w / 2) / dims.w) * 2 * parallax * 100;
@@ -121,13 +140,13 @@ export default function HoverMaskReveal({
         })`;
       }
 
-      // Animate turbulence seed for liquid edge motion while visible
       if (turbRef.current && current.current.r > 0.5) {
         const seed = (time / 60) % 100;
         turbRef.current.setAttribute("seed", String(Math.floor(seed)));
       }
 
       const stillMoving =
+        touchMode ||
         Math.abs(target.current.x - current.current.x) > 0.2 ||
         Math.abs(target.current.y - current.current.y) > 0.2 ||
         Math.abs(target.current.r - current.current.r) > 0.2 ||
@@ -141,7 +160,7 @@ export default function HoverMaskReveal({
         lastTimeRef.current = 0;
       }
     },
-    [dims.w, dims.h, parallax, shrinkPerSec]
+    [dims.w, dims.h, parallax, shrinkPerSec, touchMode, size, autoLoopDuration]
   );
 
   const ensureAnimating = useCallback(() => {
@@ -150,8 +169,20 @@ export default function HoverMaskReveal({
     rafRef.current = requestAnimationFrame(tick);
   }, [tick]);
 
+  // Kick off auto-loop when touch mode + dims are ready.
+  useEffect(() => {
+    if (touchMode && dims.w && dims.h) {
+      autoStartRef.current = 0;
+      current.current.x = dims.w / 2;
+      current.current.y = dims.h / 2;
+      target.current.r = size;
+      ensureAnimating();
+    }
+  }, [touchMode, dims.w, dims.h, size, ensureAnimating]);
+
   const onMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if (touchMode) return;
       const el = containerRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
@@ -160,15 +191,15 @@ export default function HoverMaskReveal({
       target.current.r = size;
       ensureAnimating();
     },
-    [size, ensureAnimating]
+    [size, ensureAnimating, touchMode]
   );
 
   const onEnter = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if (touchMode) return;
       const el = containerRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      // Snap position so the blob starts under the cursor (no fly-in)
       current.current.x = e.clientX - rect.left;
       current.current.y = e.clientY - rect.top;
       target.current.x = current.current.x;
@@ -176,13 +207,14 @@ export default function HoverMaskReveal({
       target.current.r = size;
       ensureAnimating();
     },
-    [size, ensureAnimating]
+    [size, ensureAnimating, touchMode]
   );
 
   const onLeave = useCallback(() => {
+    if (touchMode) return;
     target.current.r = 0;
     ensureAnimating();
-  }, [ensureAnimating]);
+  }, [ensureAnimating, touchMode]);
 
   useEffect(() => {
     return () => {
@@ -212,7 +244,6 @@ export default function HoverMaskReveal({
         style={{
           WebkitMask: `url(#${maskId})`,
           mask: `url(#${maskId})`,
-          // Hint mask coordinate system for Safari/Chrome
           maskType: "alpha",
         }}
       >
