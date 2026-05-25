@@ -139,10 +139,8 @@ export const work: Project[] = [
 ];
 
 export const whyMe = {
-  frontImage:
-    "https://placehold.co/900x1200/EBE7DE/5B6770?text=Portrait",
-  backImage:
-    "https://placehold.co/900x1200/0A0F14/00E5CC?text=Mountains",
+  frontImage: "/images/portrait.jpg",
+  backImage: "/images/mountaineer.jpg",
   lead: [
     "Systems engineer by profession.",
     "Mountaineer by instinct.",
