@@ -28,8 +28,15 @@ export default function WhyMe() {
             <HoverMaskReveal
               frontImage={whyMe.frontImage}
               backImage={whyMe.backImage}
-              size={220}
-              returnDuration={0.7}
+              size={0.20}
+              returnDuration={2.4}
+              smoothing={10}
+              parallax
+              parallaxAmount={100}
+              strength={1 * 60}
+              edgeGrain={0.7 * 0.04}
+              swirl={60}
+              radius={0}
               alt="Hassan portrait reveals mountaineering on hover"
             />
             <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between eyebrow-muted pointer-events-none">

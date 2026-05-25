@@ -11,33 +11,67 @@ import {
 type Props = {
   frontImage: string;
   backImage: string;
-  /** Reveal blob radius in px */
+
+  /**
+   * Blob size as fraction of container's longest side (0–1).
+   * Mirrors Framer "Size" knob. e.g. 0.08 = 8%.
+   * Pass a raw px number instead with `sizePx`.
+   */
   size?: number;
-  /** Mask retract animation duration in seconds */
+  sizePx?: number;
+
+  /** Mask retract animation seconds. Framer "Return time". */
   returnDuration?: number;
-  /** Parallax intensity for back image (0-1) */
-  parallax?: number;
+
+  /** Enable parallax on back image. Framer "Parallax". */
+  parallax?: boolean;
+  /** Parallax pixel amount. Framer "Amount". */
+  parallaxAmount?: number;
+
+  /** Cursor follow easing 0–1. Framer "Smoothing" (0 = snap, 1 = slow). */
+  smoothing?: number;
+
+  /** Container corner radius in px. Framer "Radius". */
+  radius?: number;
+
+  /** Displacement scale (px). Framer "Strength". */
+  strength?: number;
+
+  /** Turbulence baseFrequency. Framer "Edge grain". */
+  edgeGrain?: number;
+
+  /** Extra rotational shimmer on the turbulence seed. Framer "Swirl". */
+  swirl?: number;
+
   alt?: string;
   className?: string;
-  /** Force auto-loop mode (otherwise auto-detects touch / no-hover devices). */
+
+  /** Force auto-loop mode (otherwise auto-detects touch/no-hover). */
   autoLoop?: boolean;
   /** Seconds for one full auto-loop traversal. */
   autoLoopDuration?: number;
 };
 
 /**
- * Cursor-reactive liquid mask reveal with mobile auto-animation.
+ * Cursor-reactive liquid mask reveal — Framer "Hover Mask Reveal" parity.
  *
- * Desktop (hover): blob follows cursor, retracts on leave.
- * Touch / no-hover: blob auto-traces a smooth lissajous path across the
- * image so the reveal always plays — no input needed.
+ * Desktop hover: blob follows cursor, retracts on leave.
+ * Touch / no-hover: blob auto-traces a smooth lissajous path so the reveal
+ * always plays without input.
  */
 export default function HoverMaskReveal({
   frontImage,
   backImage,
-  size = 200,
+  size = 0.4,
+  sizePx,
   returnDuration = 0.6,
-  parallax = 0.04,
+  parallax = true,
+  parallaxAmount = 60,
+  smoothing = 0.18,
+  radius = 0,
+  strength = 60,
+  edgeGrain = 0.018,
+  swirl = 30,
   alt = "",
   className = "",
   autoLoop,
@@ -63,11 +97,22 @@ export default function HoverMaskReveal({
   const backImgRef = useRef<HTMLDivElement | null>(null);
   const turbRef = useRef<SVGFETurbulenceElement | null>(null);
 
-  const FOLLOW = 0.18;
+  // Map "Smoothing" (0 slow → 1 snap if we invert, but Framer's slider is
+  // 0 = snap, higher = slower follow). Pick a sensible range: 0 → 0.45 (snap)
+  // 1 → 0.05 (very smooth). Default 0.18 follows reasonably tight.
+  const FOLLOW = Math.max(0.02, 0.45 - smoothing * 0.4);
   const GROW = 0.22;
-  const shrinkPerSec = size / returnDuration;
 
-  // Detect touch / no-hover capability on mount.
+  // Resolve blob radius
+  const resolvedRadius = (() => {
+    if (typeof sizePx === "number") return sizePx;
+    if (!dims.w || !dims.h) return 0;
+    return Math.max(dims.w, dims.h) * size;
+  })();
+
+  const shrinkPerSec = resolvedRadius / Math.max(0.05, returnDuration);
+
+  // Touch detection
   useEffect(() => {
     if (autoLoop !== undefined) {
       setTouchMode(autoLoop);
@@ -101,8 +146,6 @@ export default function HoverMaskReveal({
         : 0.016;
       lastTimeRef.current = time;
 
-      // In touch mode, drive the target along a lissajous path so the blob
-      // sweeps the whole frame smoothly without ever stopping.
       if (touchMode && dims.w && dims.h) {
         if (!autoStartRef.current) autoStartRef.current = time;
         const t = ((time - autoStartRef.current) / 1000) / autoLoopDuration;
@@ -112,7 +155,7 @@ export default function HoverMaskReveal({
         target.current.x = dims.w / 2 + Math.sin(ang) * (dims.w / 2 - padX);
         target.current.y =
           dims.h / 2 + Math.sin(ang * 2) * (dims.h / 2 - padY);
-        target.current.r = size;
+        target.current.r = resolvedRadius;
       }
 
       current.current.x += (target.current.x - current.current.x) * FOLLOW;
@@ -131,18 +174,21 @@ export default function HoverMaskReveal({
       }
 
       if (backImgRef.current && dims.w && dims.h) {
-        const px =
-          ((current.current.x - dims.w / 2) / dims.w) * 2 * parallax * 100;
-        const py =
-          ((current.current.y - dims.h / 2) / dims.h) * 2 * parallax * 100;
-        backImgRef.current.style.transform = `translate3d(${-px}%, ${-py}%, 0) scale(${
-          1 + parallax * 0.6
-        })`;
+        if (parallax) {
+          const nx = (current.current.x - dims.w / 2) / dims.w;
+          const ny = (current.current.y - dims.h / 2) / dims.h;
+          const px = -nx * parallaxAmount;
+          const py = -ny * parallaxAmount;
+          const scale = 1 + parallaxAmount / Math.max(dims.w, dims.h) / 2;
+          backImgRef.current.style.transform = `translate3d(${px}px, ${py}px, 0) scale(${scale})`;
+        } else {
+          backImgRef.current.style.transform = "none";
+        }
       }
 
       if (turbRef.current && current.current.r > 0.5) {
-        const seed = (time / 60) % 100;
-        turbRef.current.setAttribute("seed", String(Math.floor(seed)));
+        const seed = Math.floor(((time / 60) * (1 + swirl / 30)) % 100);
+        turbRef.current.setAttribute("seed", String(seed));
       }
 
       const stillMoving =
@@ -160,7 +206,18 @@ export default function HoverMaskReveal({
         lastTimeRef.current = 0;
       }
     },
-    [dims.w, dims.h, parallax, shrinkPerSec, touchMode, size, autoLoopDuration]
+    [
+      dims.w,
+      dims.h,
+      parallax,
+      parallaxAmount,
+      shrinkPerSec,
+      touchMode,
+      resolvedRadius,
+      autoLoopDuration,
+      swirl,
+      FOLLOW,
+    ]
   );
 
   const ensureAnimating = useCallback(() => {
@@ -169,16 +226,15 @@ export default function HoverMaskReveal({
     rafRef.current = requestAnimationFrame(tick);
   }, [tick]);
 
-  // Kick off auto-loop when touch mode + dims are ready.
   useEffect(() => {
     if (touchMode && dims.w && dims.h) {
       autoStartRef.current = 0;
       current.current.x = dims.w / 2;
       current.current.y = dims.h / 2;
-      target.current.r = size;
+      target.current.r = resolvedRadius;
       ensureAnimating();
     }
-  }, [touchMode, dims.w, dims.h, size, ensureAnimating]);
+  }, [touchMode, dims.w, dims.h, resolvedRadius, ensureAnimating]);
 
   const onMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -188,10 +244,10 @@ export default function HoverMaskReveal({
       const rect = el.getBoundingClientRect();
       target.current.x = e.clientX - rect.left;
       target.current.y = e.clientY - rect.top;
-      target.current.r = size;
+      target.current.r = resolvedRadius;
       ensureAnimating();
     },
-    [size, ensureAnimating, touchMode]
+    [resolvedRadius, ensureAnimating, touchMode]
   );
 
   const onEnter = useCallback(
@@ -204,10 +260,10 @@ export default function HoverMaskReveal({
       current.current.y = e.clientY - rect.top;
       target.current.x = current.current.x;
       target.current.y = current.current.y;
-      target.current.r = size;
+      target.current.r = resolvedRadius;
       ensureAnimating();
     },
-    [size, ensureAnimating, touchMode]
+    [resolvedRadius, ensureAnimating, touchMode]
   );
 
   const onLeave = useCallback(() => {
@@ -226,6 +282,7 @@ export default function HoverMaskReveal({
     <div
       ref={containerRef}
       className={`relative w-full h-full overflow-hidden select-none ${className}`}
+      style={{ borderRadius: radius ? `${radius}px` : undefined }}
       onPointerEnter={onEnter}
       onPointerMove={onMove}
       onPointerLeave={onLeave}
@@ -274,7 +331,7 @@ export default function HoverMaskReveal({
             <feTurbulence
               ref={turbRef}
               type="fractalNoise"
-              baseFrequency="0.018"
+              baseFrequency={edgeGrain}
               numOctaves="2"
               seed="2"
               result="turb"
@@ -282,7 +339,7 @@ export default function HoverMaskReveal({
             <feDisplacementMap
               in="SourceGraphic"
               in2="turb"
-              scale="60"
+              scale={strength}
               xChannelSelector="R"
               yChannelSelector="G"
             />
